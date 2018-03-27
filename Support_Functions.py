@@ -14,19 +14,22 @@ from keras.layers import (Dense, Conv1D, Convolution2D, GRU, LSTM, Recurrent, Bi
                           Dropout, Flatten, RepeatVector, Reshape, MaxPooling1D, UpSampling1D, BatchNormalization)
 from keras.layers.core import Lambda
 from keras.optimizers import Adam
+from keras.regularizers import l1
 
 import glob
 import sys
 import re
 
-import moviepy.video.io.ImageSequenceClip
-try:
-    output = subprocess.check_output(['ffmpeg', '-version'])
-    version = output.split(b'\n')[0].split()[2]
-    print('Found: ffmpeg v{}'.format(version.decode('utf-8')))
-    ffmpeg_installed = True
-except:
-    ffmpeg_installed = False
+from scipy.signal import savgol_filter as sg
+
+#import moviepy.video.io.ImageSequenceClip
+#try:
+#    output = subprocess.check_output(['ffmpeg', '-version'])
+#    version = output.split(b'\n')[0].split()[2]
+#    print('Found: ffmpeg v{}'.format(version.decode('utf-8')))
+#    ffmpeg_installed = True
+#except:
+#    ffmpeg_installed = False
 
 Path = path.Path
 PathPatch = patches.PathPatch
@@ -48,8 +51,7 @@ cmap_9 = colors.ListedColormap(['#e41a1c', '#003057', '#4daf4a',
                  '#a65628', '#984ea3', '#ff7f00',
                  '#cab2d6', '#f781bf', '#377eb8'])
 
-
-def interpolate_missing_points(data):
+def interpolate_missing_points(data, fit_type='spline'):
     """
     Interpolates bad pixels in piezoelectric hystereis loops.\n
     The interpolation of missing points alows for machine learning operations
@@ -57,7 +59,9 @@ def interpolate_missing_points(data):
     Parameters
     ----------
     data : numpy array
-        arary of loops
+        array of loops
+    fit_type : string
+        selection of type of function for interpolation
 
     Returns
     -------
@@ -67,11 +71,14 @@ def interpolate_missing_points(data):
 
     # reshapes the data such that it can run with different data sizes
     if data.ndim == 2:
-        data = data.reshape(np.sqrt(data.shape[0]),
-                                      np.sqrt(data.shape[0]), -1)
-        data = np.expand_dims(data, axis=0)
+        data = data.reshape(np.sqrt(data.shape[0]).astype(int),
+                            np.sqrt(data.shape[0]).astype(int), -1)
+        data = np.expand_dims(data, axis=3)
     elif data.ndim == 3:
-        data = np.expand_dims(data, axis=0)
+        data = np.expand_dims(data, axis=3)
+
+    # creates a vector of the size of the data
+    point_values = np.linspace(0, 1, data.shape[2])
 
     # Loops around the x index
     for i in range(data.shape[0]):
@@ -84,15 +91,130 @@ def interpolate_missing_points(data):
 
                 if any(~np.isfinite(data[i, j, :, k])):
 
-                    true_ind = np.where(~np.isnan(data[i, j, :, k]))
-                    point_values = np.linspace(0, 1, data.shape[2])
-                    spline = interpolate.InterpolatedUnivariateSpline(point_values[true_ind],
-                                                                      data[i, j, true_ind, k].squeeze())
+                    # selects the index where values are nan
                     ind = np.where(np.isnan(data[i, j, :, k]))
-                    val = spline(point_values[ind])
-                    data[i, j, ind, k] = val
+
+                    # if the first value is 0 copies the second value
+                    if 0 in np.asarray(ind):
+                        data[i, j, 0, k] = data[i, j, 1, k]
+
+                    # selects the values that are not nan
+                    true_ind = np.where(~np.isnan(data[i, j, :, k]))
+
+                    # for a spline fit
+                    if fit_type == 'spline':
+                        spline = interpolate.InterpolatedUnivariateSpline(point_values[true_ind],
+                                                                          data[i, j, true_ind, k].squeeze())
+                        data[i, j, ind, k] = spline(point_values[ind])
+
+                    # for a linear fit
+                    elif fit_type == 'linear':
+
+                        data[i, j, :, k] = np.interp(point_values,
+                                                     point_values[true_ind],
+                                                     data[i, j, true_ind, k].squeeze())
 
     return data.squeeze()
+
+def sg_filter_data(data, num_to_remove=3, window_length=7, polyorder=3, fit_type='spline'):
+    """
+    Applies a Savitzky-Golay filter to the data which is used to remove outlier or noisy points from the data
+
+    Parameters
+    ----------
+    data : numpy, array
+        array of loops
+    num_to_remove : numpy, int
+        sets the number of points to remove
+    window_length : numpy, int
+        sets the size of the window for the sg filter
+    polyorder : numpy, int
+        sets the order of the sg filter
+    fit_type : string
+        selection of type of function for interpolation
+
+    Returns
+    -------
+    cleaned_data : numpy array
+        array of loops
+    """
+    # reshapes the data such that it can run with different data sizes
+    if data.ndim == 2:
+        data = data.reshape(np.sqrt(data.shape[0]).astype(int),
+                            np.sqrt(data.shape[0]).astype(int), -1)
+        data = np.expand_dims(data, axis=3)
+    elif data.ndim == 3:
+        data = np.expand_dims(data, axis=3)
+
+    cleaned_data = np.copy(data)
+
+    # creates a vector of the size of the data
+    point_values = np.linspace(0, 1, data.shape[2])
+
+    # Loops around the x index
+    for i in range(data.shape[0]):
+
+        # Loops around the y index
+        for j in range(data.shape[1]):
+
+            # Loops around the number of cycles
+            for k in range(data.shape[3]):
+
+                sg_ = sg(data[i, j, :, k],
+                         window_length=window_length, polyorder=polyorder)
+                diff = np.abs(data[i, j, :, k] - sg_)
+                sort_ind = np.argsort(diff)
+                remove = sort_ind[-1 * num_to_remove::].astype(int)
+                cleaned_data[i, j, remove, k] = np.nan
+
+    cleaned_data = clean_and_interpolate(cleaned_data, fit_type)
+
+    return cleaned_data
+
+#def interpolate_missing_points(data):
+#    """
+#    Interpolates bad pixels in piezoelectric hystereis loops.\n
+#    The interpolation of missing points alows for machine learning operations
+#
+#    Parameters
+#    ----------
+#    data : numpy array
+#        arary of loops
+#
+#    Returns
+#    -------
+#    data_cleaned : numpy array
+#        arary of loops
+#    """
+#
+#    # reshapes the data such that it can run with different data sizes
+#    if data.ndim == 2:
+#        data = data.reshape(np.sqrt(data.shape[0]),
+#                                      np.sqrt(data.shape[0]), -1)
+#        data = np.expand_dims(data, axis=0)
+#    elif data.ndim == 3:
+#        data = np.expand_dims(data, axis=0)
+#
+#    # Loops around the x index
+#    for i in range(data.shape[0]):
+#
+#        # Loops around the y index
+#        for j in range(data.shape[1]):
+#
+#            # Loops around the number of cycles
+#            for k in range(data.shape[3]):
+#
+#                if any(~np.isfinite(data[i, j, :, k])):
+#
+#                    true_ind = np.where(~np.isnan(data[i, j, :, k]))
+#                    point_values = np.linspace(0, 1, data.shape[2])
+#                    spline = interpolate.InterpolatedUnivariateSpline(point_values[true_ind],
+#                                                                      data[i, j, true_ind, k].squeeze())
+#                    ind = np.where(np.isnan(data[i, j, :, k]))
+#                    val = spline(point_values[ind])
+#                    data[i, j, ind, k] = val
+#
+#    return data.squeeze()
 
 def conduct_PCA(loops, n_components=15, verbose=True):
     """
@@ -160,6 +282,8 @@ def plot_pca_maps(pca, loops, add_colorbars=True, verbose=False, letter_labels=F
     ----------
     pca : model
         previously computed pca
+    loops : numpy, array
+        data to plot
     add_colorbars : bool, optional
         adds colorbars to images
     verbose : bool, optional
@@ -184,8 +308,8 @@ def plot_pca_maps(pca, loops, add_colorbars=True, verbose=False, letter_labels=F
 
     # creates the figures and axes in a pretty way
     fig, ax = layout_graphs_of_arb_number(num_of_plots)
-    # resizes the array for hyperspectral data
 
+    # resizes the array for hyperspectral data
     if loops.ndim == 3:
         original_size = loops.shape[0]
         loops = loops.reshape(-1, loops.shape[2])
@@ -219,7 +343,66 @@ def plot_pca_maps(pca, loops, add_colorbars=True, verbose=False, letter_labels=F
 
     savefig(filename, dpi=300, print_EPS=print_EPS, print_PNG=print_PNG)
 
-def layout_graphs_of_arb_number(graph):
+def plot_pca_results(pca, loops, voltage, signal_info, add_colorbars=True, verbose=False, letter_labels=False,
+                  add_scalebar=False, filename='./PCA_maps', print_EPS=False,
+                  print_PNG=False, dpi=300, num_of_plots=True):
+
+    if num_of_plots == True:
+        num_of_plots = pca.n_components_
+
+    # stores the number of plots in a row
+    mod = num_of_plots//(np.sqrt(num_of_plots)//1).astype(int)
+    # creates the figures and axes in a pretty way
+    fig, ax = layout_graphs_of_arb_number(num_of_plots*2, mod = mod)
+
+    # resizes the array for hyperspectral data
+    if loops.ndim == 3:
+        original_size = loops.shape[0]
+        loops = loops.reshape(-1, loops.shape[2])
+        verbose_print(verbose, 'shape of data resized to [{0} x {1}]'.format(
+            loops.shape[0], loops.shape[1]))
+    elif loops.ndim == 2:
+        original_size = np.sqrt(loops.shape[0]).astype(int)
+    else:
+        raise ValueError("data is of an incorrect size")
+
+    # computes the PCA maps
+    PCA_maps = pca_weights_as_embeddings(pca, loops, num_of_components=num_of_plots)
+
+    # Formats figures
+    for i, ax in enumerate(ax):
+
+        # Checks if axes is an image or a plot
+        if (i // mod % 2 == 0):
+            pc_number = i - mod * (i // (mod*2))
+            plot_imagemap(ax, PCA_maps[:, pc_number], color_bar = add_colorbars)
+            # labels figures
+            labelfigs(ax, i, string_add='PC {0:d}'.format(pc_number+1), loc='bm')
+            add_scalebar_to_figure(ax, 2000, 500)
+
+        else:
+
+            # Plots the PCA egienvector and formats the axes
+            ax.plot(voltage, pca.components_[
+                    i - mod - ((i // mod) // 2) * mod], 'k')
+
+            # Formats and labels the axes
+            ax.set_xlabel('Voltage')
+            ax.set_ylabel(signal_info['y_label'])
+            ax.set_yticklabels('')
+            if signal_info['y_lim'] is not None:
+                ax.set_ylim(signal_info['y_lim'])
+
+        # labels figures
+        if letter_labels:
+            labelfigs(ax[i], i)
+
+    plt.tight_layout(pad=0, h_pad=0)
+
+    savefig(filename, dpi=300, print_EPS=print_EPS, print_PNG=print_PNG)
+
+
+def layout_graphs_of_arb_number(graph, mod=None):
     """
     Sets the layout of graphs in matplotlib in a pretty way based on the number of plots
 
@@ -236,19 +419,20 @@ def layout_graphs_of_arb_number(graph):
         numpy array of axes that are created.
     """
 
-    # Selects the number of columns to have in the graph
-    if graph < 3:
-        mod = 2
-    elif graph < 5:
-        mod = 3
-    elif graph < 10:
-        mod = 4
-    elif graph < 17:
-        mod = 5
-    elif graph < 26:
-        mod = 6
-    elif graph < 37:
-        mod = 7
+    if mod == None:
+        # Selects the number of columns to have in the graph
+        if graph < 3:
+            mod = 2
+        elif graph < 5:
+            mod = 3
+        elif graph < 10:
+            mod = 4
+        elif graph < 17:
+            mod = 5
+        elif graph < 26:
+            mod = 6
+        elif graph < 37:
+            mod = 7
 
     # builds the figure based on the number of graphs and selected number of columns
     fig, axes = plt.subplots(graph // mod + (graph % mod > 0), mod,
@@ -574,7 +758,7 @@ def plot_pca_vectors(voltage, pca, num_of_plots=True, set_ylim=True, letter_labe
 
 def plot_embedding_maps(data, add_colorbars=True, verbose=False, letter_labels=False,
                         add_scalebar=False, filename='./embedding_maps', print_EPS=False,
-                        print_PNG=False, dpi=300, num_of_plots=True):
+                        print_PNG=False, dpi=300, num_of_plots=True, ranges=None):
     """
     Adds a colorbar to a imageplot
 
@@ -600,6 +784,8 @@ def plot_embedding_maps(data, add_colorbars=True, verbose=False, letter_labels=F
         resolution of exported image
     num_of_plots : int, optional
             number of principle componets to show
+    ranges : float, optional
+            sets the clim of the images
     """
     if num_of_plots:
         num_of_plots = data.shape[data.ndim - 1]
@@ -622,7 +808,11 @@ def plot_embedding_maps(data, add_colorbars=True, verbose=False, letter_labels=F
         im = ax[i].imshow(data[:, i].reshape(original_size, original_size))
         ax[i].set_yticklabels('')
         ax[i].set_xticklabels('')
-        #
+
+        if ranges is None:
+            pass
+        else:
+            im.set_clim(0,ranges[i])
 
         if add_colorbars:
             add_colorbar(ax[i], im)
@@ -1068,6 +1258,24 @@ def get_ith_layer_output(model, X, i, mode='test'):
 
 def get_activations(model, X=[], i=[], mode='test'):
 
+    """
+    support function to get the activations of a specific layer
+    this function can take either a model and compute the activations or can load previously
+    generated activations saved as an numpy array
+
+    Parameters
+    ----------
+    model : keras model, object
+        pre-trained keras model
+    X  : numpy array, float
+        Input data
+    i  : numpy, int
+        index of the layer to extract
+    mode : string, optional
+        test or train, changes the model behavior to scale the network properly when using
+        dropout or batchnorm
+    """
+
     if isinstance(model, str):
         activation = np.load(model)
         print(f'model {model} loaded from saved file')
@@ -1075,3 +1283,327 @@ def get_activations(model, X=[], i=[], mode='test'):
         activation = get_ith_layer_output(model, np.atleast_3d(X), i, model)
 
     return activation
+
+def rnn_auto(layer, size, num_encode_layers, num_decode_layers, embedding, n_step, lr = 3e-5, drop_frac=0.,bidirectional=True, l1_norm = 1e-4,**kwargs):
+    """
+    Function which builds the reccurrent neural network autoencoder
+
+    Parameters
+    ----------
+    layer : string; options: 'lstm','gru'
+        selects the layer type
+    size  : numpy, int
+        sets the size of encoding and decoding layers in the network
+    num_encode_layers  : numpy, int
+        sets the number of encoding layers in the network
+    num_decode_layers : numpy, int
+        sets the number of decoding layers in the network
+    embedding : numpy, int
+        sets the size of the embedding layer
+    n_steps : numpy, int
+        length of the input time series
+    lr : numpy, float
+        sets the learning rate for the model
+    drop_frac : numpy, float
+        sets the dropout fraction
+    bidirectional : numpy, bool
+        selects if the model is linear or bidirectional
+    l1_norm : numpy. float
+        sets the lambda value of the l1 normalization. The larger the value the greater the
+        sparsity. None can be passed to exclude the use or l1 normailzation.
+
+    Returns
+    -------
+    model : Keras, object
+        Keras tensorflow model
+    """
+
+    # defines the model
+    model = Sequential()
+
+    # selects if the model is bidirectional
+    if bidirectional:
+        wrapper = Bidirectional
+        # builds the first layer
+        model.add(Bidirectional(layer(size, return_sequences=(num_encode_layers > 1),  dropout=drop_frac),
+                            input_shape=(n_step, 1)))
+    else:
+        wrapper = lambda x: x
+        # builds the first layer
+        model.add(wrapper(layer(size, return_sequences=(num_encode_layers > 1),  dropout=drop_frac,
+                input_shape=(n_step, 1))))
+
+    # builds the encoding layers
+    for i in range(1, num_encode_layers):
+        model.add(wrapper(layer(size, return_sequences=(i < num_encode_layers - 1), dropout=drop_frac)))
+
+    # builds the embedding layer
+    if l1_norm == None:
+        # embedding layer without l1 regulariization
+        model.add(Dense(embedding, activation='relu', name='encoding'))
+    else:
+        # embedding layer with l1 regularization
+        model.add(Dense(embedding, activation='relu', name='encoding',activity_regularizer=l1(l1_norm)))
+
+    # builds the repeat vector
+    model.add(RepeatVector(n_step))
+
+    # builds the decoding layer
+    for i in range(num_decode_layers):
+        model.add(wrapper(layer(size, return_sequences=True, dropout=drop_frac)))
+
+    # builds the time distributed layer to reconstruct the original input
+    model.add(TimeDistributed(Dense(1, activation='linear')))
+
+    # complies the model
+    model.compile(Adam(lr), loss='mse')
+
+    # returns the model
+    return model
+
+def train_model(model, data_train, data_test, path, epochs, batch_size):
+    """
+    Function which trains the neural network
+
+    Parameters
+    ----------
+    model : Keras, object
+        model to train
+    data_train  : numpy, float
+        data to train the network
+    data_test  : numpy, float
+        data to test the network
+    path : string
+        sets the folder to save the data
+    epochs : numpy, int
+        train the network for this number of epochs
+    batch_size : numpy, int
+        sets the size of the batch. Batch size should be as large as possible. The batch
+        size is limited by the GPU memory.
+    """
+
+    make_folder(path)
+    keras.models.save_model(model,path + '/start')
+
+    tbCallBack = keras.callbacks.TensorBoard(
+                        log_dir= path, histogram_freq=0,
+                        write_graph=True, write_images=True)
+
+    #builds the filename
+    filepath = path + '/weights.{epoch:02d}-{val_loss:.2f}.hdf5'
+    # sets the control of checkpoints
+    checkpoint = keras.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbose=0, save_best_only=True,
+                                             save_weights_only=True, mode='min', period=1)
+
+    # fits the model
+    model.fit(np.atleast_3d(data), np.atleast_3d(data), epochs=250000,
+          batch_size=1200, validation_data=(np.atleast_3d(data), np.atleast_3d(data)),
+          callbacks=[tbCallBack, checkpoint])
+
+
+def clean_and_interpolate(data, fit_type='spline'):
+    """
+    Function which removes bad datapoints
+
+    Parameters
+    ----------
+    data : numpy, float
+        data to clean
+    """
+
+    data[~np.isfinite(data)] = np.nan
+    data = interpolate_missing_points(data, fit_type)
+    data = data.reshape(-1, data.shape[2])
+    return data
+
+def plot_imagemap(axis, data, clim = None, color_bar = False):
+
+        """
+        Plots an imagemap
+
+        Parameters
+        ----------
+        axis : matplotlib, object
+            axis which is plotted
+        data  : numpy, float
+            data to plot
+        clim  : numpy, float, optional
+            sets the climit for the image
+        color_bar  : bool, optional
+            selects to plot the colorbar bar for the image
+        """
+        if data.ndim == 1:
+            data = data.reshape(np.sqrt(data.shape[0]).astype(int), np.sqrt(data.shape[0]).astype(int))
+
+        if clim is None:
+            im = axis.imshow(data)
+        else:
+            im = axis.imshow(data, clim = clim)
+
+        axis.set_yticklabels('')
+        axis.set_xticklabels('')
+
+        if color_bar:
+            # Adds the colorbar
+            divider = make_axes_locatable(axis)
+            cax = divider.append_axes('right', size='10%', pad=0.05)
+            cbar = plt.colorbar(im, cax=cax, format='%.1e')
+
+def normalize_data(data):
+
+    data_norm = np.copy(data)
+    data_norm -= np.mean(data_norm.reshape(-1))
+    data_norm /= np.std(data_norm)
+
+    return data_norm
+
+def get_run_id(layer_type, size, num_encode_layers,
+             num_decode_layers, embedding,
+             lr, drop_frac,
+             bidirectional, l1_norm,
+             batch_norm, **kwargs):
+
+    run = (f"{layer_type}_size{size:03d}_enc{num_encode_layers}_emb{embedding}_dec{num_decode_layers}_lr{lr:1.0e}"
+           f"_drop{int(100 * drop_frac)}").replace('e-', 'm')
+    if Bidirectional:
+        run = 'Bidirect_' + run
+    if layer_type == 'conv':
+        run += f'_k{kernel_size}'
+    if np.any(batch_norm):
+
+        if batch_norm[0]:
+            ind = 'T'
+        else:
+            ind = 'F'
+
+        if batch_norm[1]:
+            ind1 = 'T'
+        else:
+            ind1 = 'F'
+
+        run += f'_batchnorm_{ind}{ind1}'
+    return run
+
+def add_dropout(model, value):
+    if value > 0:
+        return model.add(Dropout(value))
+    else:
+        pass
+
+def rnn_auto(layer_type, size, num_encode_layers,
+             num_decode_layers, embedding,
+             n_step, lr = 3e-5, drop_frac=0.,
+             bidirectional=True, l1_norm = 1e-4,
+             batch_norm=[False, False],**kwargs):
+    """
+    Function which builds the reccurrent neural network autoencoder
+
+    Parameters
+    ----------
+    layer : string; options: 'lstm','gru'
+        selects the layer type
+    size  : numpy, int
+        sets the size of encoding and decoding layers in the network
+    num_encode_layers  : numpy, int
+        sets the number of encoding layers in the network
+    num_decode_layers : numpy, int
+        sets the number of decoding layers in the network
+    embedding : numpy, int
+        sets the size of the embedding layer
+    n_steps : numpy, int
+        length of the input time series
+    lr : numpy, float
+        sets the learning rate for the model
+    drop_frac : numpy, float
+        sets the dropout fraction
+    bidirectional : numpy, bool
+        selects if the model is linear or bidirectional
+    l1_norm : numpy. float
+        sets the lambda value of the l1 normalization. The larger the value the greater the
+        sparsity. None can be passed to exclude the use or l1 normailzation.
+
+    Returns
+    -------
+    model : Keras, object
+        Keras tensorflow model
+    """
+
+    # Selects the type of RNN neurons to use
+    if layer_type == 'lstm':
+        layer = LSTM
+    elif layer_type == 'gru':
+        layer = GRU
+
+    # defines the model
+    model = Sequential()
+
+    # selects if the model is bidirectional
+    if bidirectional:
+        wrapper = Bidirectional
+        # builds the first layer
+
+        # builds the first layer
+        model.add(wrapper(layer(size, return_sequences=(num_encode_layers > 1)),
+                        input_shape=(n_step, 1)))
+        add_dropout(model, drop_frac)
+    else:
+        wrapper = lambda x: x
+        # builds the first layer
+        model.add(wrapper(layer(size, return_sequences=(num_encode_layers > 1),
+                        input_shape=(n_step, 1))))
+        add_dropout(model, drop_frac)
+
+
+    # builds the encoding layers
+    for i in range(1, num_encode_layers):
+        model.add(wrapper(layer(size, return_sequences=(i < num_encode_layers - 1))))
+        add_dropout(model, drop_frac)
+
+    # adds batch normalization prior to embedding layer
+    if batch_norm[0]:
+        model.add(BatchNormalization())
+
+    # builds the embedding layer
+    if l1_norm == None:
+        # embedding layer without l1 regulariization
+        model.add(Dense(embedding, activation='relu', name='encoding'))
+    else:
+        # embedding layer with l1 regularization
+        model.add(Dense(embedding, activation='relu', name='encoding',activity_regularizer=l1(l1_norm)))
+
+    # adds batch normalization after embedding layer
+    if batch_norm[1]:
+        model.add(BatchNormalization())
+
+    # builds the repeat vector
+    model.add(RepeatVector(n_step))
+
+    # builds the decoding layer
+    for i in range(num_decode_layers):
+        model.add(wrapper(layer(size, return_sequences=True)))
+        add_dropout(model, drop_frac)
+
+    # builds the time distributed layer to reconstruct the original input
+    model.add(TimeDistributed(Dense(1, activation='linear')))
+
+    # complies the model
+    model.compile(Adam(lr), loss='mse')
+
+    run_id = get_run_id(layer_type, size, num_encode_layers,
+             num_decode_layers, embedding,
+             lr, drop_frac, bidirectional, l1_norm,
+             batch_norm)
+
+    # returns the model
+    return model, run_id
+
+def check_folder_exist(folder_name):
+    value = 1
+    folder_name += f'_{value:03d}'
+
+    if os.path.exists("./" + folder_name):
+        while os.path.exists("./" + folder_name):
+            value += 1
+            folder_name = folder_name[:-4]
+            folder_name += f'_{value:03d}'
+    return folder_name
