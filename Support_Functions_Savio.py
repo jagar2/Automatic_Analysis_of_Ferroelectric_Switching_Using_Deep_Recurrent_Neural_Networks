@@ -1161,8 +1161,8 @@ def get_run_id(layer_type, size, num_encode_layers,
              bidirectional, l1_norm,
              batch_norm, **kwargs):
 
-    run = (f"{layer_type}_size{size:03d}_enc{num_encode_layers}_emb{embedding}_dec{num_decode_layers}_lr{lr:1.0e}"
-           f"_drop{int(100 * drop_frac)}").replace('e-', 'm')
+    d = int(100 * drop_frac)
+    run = ('{0}_size{1:03d}_enc{2}_emb{3}_dec{4}_lr{5:1.0e}_drop{6}'.format(layer_type, size, num_encode_layers, embedding, num_decode_layers,lr,d)).replace('e-', 'm')
     if Bidirectional:
         run = 'Bidirect_' + run
     if layer_type == 'conv':
