@@ -27,13 +27,15 @@ Resonance = sf.sg_filter_data(Resonance, fit_type='linear')
 Resonance = sf.normalize_data(Resonance)
 
 model, run_id = sf.rnn_auto('lstm', size=64, num_encode_layers = 3, num_decode_layers = 3,
-                                        embedding = 16, n_step = 96, lr = 3e-5, drop_frac=0.2,
+                                        embedding = 16, n_step = 96, lr = 1e-4, drop_frac=0.2,
                                         bidirectional=True, l1_norm = 1e-4, batch_norm = [False, False])
 
 seed = 42
 np.random.seed(seed)
 
-run_id = sf.check_folder_exist(run_id)
+scratch_path = '/global/scratch/jagar/'
+
+run_id = sf.check_folder_exist(scratch_path + run_id)
 
 sf.Make_folder(run_id)
 
