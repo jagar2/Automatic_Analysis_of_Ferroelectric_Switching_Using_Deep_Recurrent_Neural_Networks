@@ -1,4 +1,4 @@
-import Support_Functions as sf
+import Support_Functions_Savio as sf
 from scipy import io
 import keras
 import numpy as np
@@ -40,7 +40,7 @@ run_id = sf.check_folder_exist(scratch_path + run_id)
 sf.Make_folder(run_id)
 
 model_name = run_id + 'start'
-keras.models.save_model(model,run_id + f'/start_seed_{seed:03d}')
+keras.models.save_model(model, run_id + f'/start_seed_{seed:03d}')
 
 tbCallBack = keras.callbacks.TensorBoard(
     log_dir= run_id, histogram_freq=0, write_graph=True, write_images=True)
