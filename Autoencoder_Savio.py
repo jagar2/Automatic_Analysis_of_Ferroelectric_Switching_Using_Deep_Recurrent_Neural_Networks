@@ -42,16 +42,18 @@ run_id = sf.check_folder_exist(scratch_path + run_id)
 sf.Make_folder(run_id)
 
 model_name = run_id + 'start'
-keras.models.save_model(model, run_id + '/start_seed_{0:03d}'.format(seed))
+keras.models.save_model(model, run_id + '/start_seed_{0:03d}.h5'.format(seed))
 
-tbCallBack = keras.callbacks.TensorBoard(
-    log_dir= run_id, histogram_freq=0, write_graph=True, write_images=True)
+#tbCallBack = keras.callbacks.TensorBoard(
+#    log_dir= run_id + '/', histogram_freq=0, write_graph=True, write_images=True)
 
 filepath = run_id + '/weights.{epoch:02d}-{val_loss:.2f}.hdf5'
 
 checkpoint = keras.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbose=0, save_best_only=True,
                                              save_weights_only=True, mode='min', period=1)
 
-model.fit(np.atleast_3d(Resonance), np.atleast_3d(Resonance), epochs=25000,
+logger = keras.callbacks.CSVLogger(run_id + '/log.csv', separator=',', append=True)
+
+history = model.fit(np.atleast_3d(Resonance), np.atleast_3d(Resonance), epochs=25000,
           batch_size=1800, validation_data=(np.atleast_3d(Resonance), np.atleast_3d(Resonance)),
-          callbacks=[tbCallBack, checkpoint])
+          callbacks=[checkpoint, logger])
