@@ -28,9 +28,9 @@ import numpy as np
 
 Resonance = np.load('resonance.npy')
 
-model, run_id = sf.rnn_auto('lstm', size=64, num_encode_layers = 4, num_decode_layers = 4,
+model, run_id = sf.rnn_auto('lstm', size=32, num_encode_layers = 4, num_decode_layers = 4,
                                         embedding = 16, n_step = 96, lr = 3e-5, drop_frac=0.2,
-                                        bidirectional=True, l1_norm = 1e-4, batch_norm = [False, False])
+                                        bidirectional=True, l1_norm = 1e-4, batch_norm = [True, True])
 
 seed = 42
 np.random.seed(seed)
