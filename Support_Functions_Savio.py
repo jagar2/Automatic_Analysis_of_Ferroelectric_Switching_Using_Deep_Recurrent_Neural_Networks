@@ -461,10 +461,6 @@ def pca_weights_as_embeddings(pca, loops, num_of_components=0, verbose=True):
 
     return (PCA_embedding)
 
-def verbose_print(verbose, *args):
-    if verbose:
-        print(*args)
-
 def add_colorbar(axes, plot, location='right', size=10, pad=0.05, format='%.1e', ticks = True):
     """
     Adds a colorbar to a imageplot
@@ -1162,7 +1158,7 @@ def get_run_id(layer_type, size, num_encode_layers,
              batch_norm, **kwargs):
 
     d = int(100 * drop_frac)
-    run = ('{0}_size{1:03d}_enc{2}_emb{3}_dec{4}_lr{5:1.0e}_drop{6}'.format(layer_type, size, num_encode_layers, embedding, num_decode_layers,lr,d)).replace('e-', 'm')
+    run = ('{0}_size{1:03d}_enc{2}_emb{3}_dec{4}_lr{5:1.0e}_drop{6}_l1norm_{7}'.format(layer_type, size, num_encode_layers, embedding, num_decode_layers,lr,drop_frac,l1_norm)).replace('e-', 'm')
     if Bidirectional:
         run = 'Bidirect_' + run
     if layer_type == 'conv':
