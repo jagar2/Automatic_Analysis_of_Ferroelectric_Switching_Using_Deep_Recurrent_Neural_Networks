@@ -26,16 +26,16 @@ import numpy as np
 #Resonance = sf.sg_filter_data(Resonance, fit_type='linear')
 #Resonance = sf.normalize_data(Resonance)
 
-Resonance = np.load('resonance.npy')
+Piezo = np.load('piezo_norm.npy')
 
-model, run_id = sf.rnn_auto('lstm', size=32, num_encode_layers = 4, num_decode_layers = 4,
+model, run_id = sf.rnn_auto('lstm', size=64, num_encode_layers = 4, num_decode_layers = 4,
                                         embedding = 16, n_step = 96, lr = 3e-5, drop_frac=0.2,
-                                        bidirectional=True, l1_norm = 1e-4, batch_norm = [True, True])
+                                        bidirectional=True, l1_norm = 1e-5, batch_norm = [True, True])
 
 seed = 42
 np.random.seed(seed)
 
-scratch_path = '/global/scratch/jagar/'
+scratch_path = '/global/scratch/jagar/Piezo_auto/'
 
 run_id = sf.check_folder_exist(scratch_path + run_id)
 
@@ -54,6 +54,6 @@ checkpoint = keras.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbo
 
 logger = keras.callbacks.CSVLogger(run_id + '/log.csv', separator=',', append=True)
 
-history = model.fit(np.atleast_3d(Resonance), np.atleast_3d(Resonance), epochs=25000,
-          batch_size=1800, validation_data=(np.atleast_3d(Resonance), np.atleast_3d(Resonance)),
+history = model.fit(np.atleast_3d(Piezo), np.atleast_3d(Piezo), epochs=100000,
+          batch_size=3600, validation_data=(np.atleast_3d(Piezo), np.atleast_3d(Piezo)),
           callbacks=[checkpoint, logger])
