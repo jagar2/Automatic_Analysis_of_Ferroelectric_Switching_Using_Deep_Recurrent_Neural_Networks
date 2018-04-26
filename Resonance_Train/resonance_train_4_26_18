@@ -1,0 +1,36 @@
+import Support_Functions_Savio as sf
+from scipy import io
+import keras
+import numpy as np
+
+resonance_norm = np.load('resonance_4_26_2018.npy')
+
+model, run_id = sf.rnn_auto('lstm', size=64, num_encode_layers = 4, num_decode_layers = 4,
+                                        embedding = 16, n_step = 96, lr = 3e-5, drop_frac=0.2,
+                                        bidirectional=True, l1_norm = 1e-5, batch_norm = [True, True])
+
+seed = 42
+np.random.seed(seed)
+
+scratch_path = '/global/scratch/jagar/resonance_4_26_2018/'
+
+run_id = sf.check_folder_exist(scratch_path + run_id)
+
+sf.Make_folder(run_id)
+
+model_name = run_id + 'start'
+keras.models.save_model(model, run_id + '/start_seed_{0:03d}.h5'.format(seed))
+
+#tbCallBack = keras.callbacks.TensorBoard(
+#    log_dir= run_id + '/', histogram_freq=0, write_graph=True, write_images=True)
+
+filepath = run_id + '/weights.{epoch:08d}-{val_loss:.4f}.hdf5'
+
+checkpoint = keras.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbose=0, save_best_only=True,
+                                             save_weights_only=True, mode='min', period=1)
+
+logger = keras.callbacks.CSVLogger(run_id + '/log.csv', separator=',', append=True)
+
+history = model.fit(np.atleast_3d(resonance_norm), np.atleast_3d(resonance_norm), epochs=100000,
+          batch_size=1800, validation_data=(np.atleast_3d(resonance_norm), np.atleast_3d(resonance_norm)),
+          callbacks=[checkpoint, logger])
